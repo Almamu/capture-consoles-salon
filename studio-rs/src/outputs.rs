@@ -25,6 +25,9 @@ const AUDIO_BLOCK: usize = 48_000 / 40 * 4; // 25 ms de S16LE stéréo
 const AUDIO_SOURCE: &str = "gl310_audio"; // entrée audio virtuelle vue par OBS (« GL310-Audio »)
 const AUDIO_FEED: &str = "gl310-feed"; // flux pw-cat qui l'alimente
 
+/// Entre deux décodeurs : le suivant attend de toute façon la prochaine image clé.
+const DECODER_PAUSE: Duration = Duration::from_millis(200);
+
 const DECODE_INPUT: [&str; 14] = [
     "-hide_banner", "-loglevel", "error", "-fflags", "nobuffer", "-flags", "low_delay",
     "-probesize", "500000", "-analyzeduration", "500000", "-f", "mpegts", "-i",
@@ -148,7 +151,8 @@ fn decoder(hub: &Hub, output: &[&str]) -> Result<(Child, impl Read), String> {
         .map_err(|e| format!("ffmpeg introuvable ({e})"))?;
     let mut stdin = child.stdin.take().expect("entrée ffmpeg");
     let stdout = child.stdout.take().expect("sortie ffmpeg");
-    let rx = hub.subscribe(1024);
+    // Coupé au redémarrage de l'encodeur : ffmpeg se fige sur des horodatages remis à zéro.
+    let rx = hub.subscribe_session(1024);
     thread::spawn(move || {
         for chunk in rx {
             if stdin.write_all(&chunk).is_err() {
@@ -183,36 +187,44 @@ fn stop(children: &mut [&mut Child]) {
 }
 
 fn run_video(hub: &Hub, preview: &Mutex<Preview>, journal: &Journal) -> Result<(), String> {
-    let (mut ffmpeg, mut frames) = decoder(hub, &[
-        "-map", "0:v:0", "-vf", "scale=1920:1080", "-pix_fmt", "yuv420p", "-f", "rawvideo", "pipe:1",
-    ])?;
     let (mut camera, camera_in) = pipewire_node(
         &["rawvideoparse", "format=i420", "width=1920", "height=1080", "framerate=30/1"],
         "media.class=Video/Source,media.role=Camera,node.name=gl310-camera,node.description=GL310",
     )?;
     let mut camera_in = Some(camera_in);
     let mut frame = vec![0u8; i420_len(WIDTH, HEIGHT)];
+    // Un décodeur par flux : il s'arrête à chaque redémarrage de l'encodeur et le suivant prend le nouveau flux,
+    // sans retirer la caméra PipeWire qu'OBS utilise.
     let result = loop {
-        if let Err(e) = frames.read_exact(&mut frame) {
-            break Err(format!("décodeur vidéo arrêté ({e})"));
+        let (mut ffmpeg, mut frames) = match decoder(hub, &[
+            "-map", "0:v:0", "-vf", "scale=1920:1080", "-pix_fmt", "yuv420p", "-f", "rawvideo", "pipe:1",
+        ]) {
+            Ok(d) => d,
+            Err(e) => break Err(e),
+        };
+        while frames.read_exact(&mut frame).is_ok() {
+            if let Some(input) = camera_in.as_mut()
+                && input.write_all(&frame).is_err() {
+                    journal.push("caméra PipeWire GL310 arrêtée : l'aperçu continue sans elle");
+                    camera_in = None;
+                }
+            let rgba = Arc::new(i420_to_rgba_half(&frame, WIDTH, HEIGHT));
+            let mut p = preview.lock().unwrap();
+            p.rgba = Some(rgba);
+            p.number += 1;
         }
-        if let Some(input) = camera_in.as_mut()
-            && input.write_all(&frame).is_err() {
-                journal.push("caméra PipeWire GL310 arrêtée : l'aperçu continue sans elle");
-                camera_in = None;
-            }
-        let rgba = Arc::new(i420_to_rgba_half(&frame, WIDTH, HEIGHT));
-        let mut p = preview.lock().unwrap();
-        p.rgba = Some(rgba);
-        p.number += 1;
+        stop(&mut [&mut ffmpeg]);
+        if camera_in.is_none() {
+            break Err("caméra PipeWire GL310 à relancer".into());
+        }
+        thread::sleep(DECODER_PAUSE);
     };
     drop(camera_in);
-    stop(&mut [&mut ffmpeg, &mut camera]);
+    stop(&mut [&mut camera]);
     result
 }
 
 fn run_audio(hub: &Hub, peak: &AtomicU32, journal: &Journal) -> Result<(), String> {
-    let (mut ffmpeg, mut pcm) = decoder(hub, &["-map", "0:a:0", "-f", "s16le", "-ar", "48000", "-ac", "2", "pipe:1"])?;
     let mut feed = Command::new("pw-cat")
         .args(["--playback", "--target", "0", "-P"])
         .arg(format!("{{ node.autoconnect = false, node.name = {AUDIO_FEED}, node.description = GL310-son-du-jeu }}"))
@@ -225,27 +237,36 @@ fn run_audio(hub: &Hub, peak: &AtomicU32, journal: &Journal) -> Result<(), Strin
     let mut feed_in = feed.stdin.take();
     let (mut linked, mut last_try) = (false, Instant::now() - Duration::from_secs(1));
     let mut block = vec![0u8; AUDIO_BLOCK];
+    // Comme l'image : un décodeur par flux ; pw-cat et son lien vers GL310-Audio restent en place.
     let result = loop {
-        if let Err(e) = pcm.read_exact(&mut block) {
-            break Err(format!("décodeur audio arrêté ({e})"));
-        }
-        let max = block.as_chunks::<2>().0.iter().map(|s| i16::from_le_bytes(*s).unsigned_abs()).max().unwrap_or(0);
-        peak.store((max as f32 / 32768.0).to_bits(), Ordering::Relaxed);
-        if let Some(input) = feed_in.as_mut()
-            && input.write_all(&block).is_err()
-        {
-            journal.push("son du jeu : pw-cat arrêté, l'entrée GL310-Audio reste muette");
-            feed_in = None;
-        }
-        if !linked && last_try.elapsed() >= Duration::from_millis(200) {
-            linked = link_audio_feed();
-            last_try = Instant::now();
-            if linked {
-                journal.push("son du jeu relié à l'entrée audio GL310-Audio");
+        let (mut ffmpeg, mut pcm) = match decoder(hub, &["-map", "0:a:0", "-f", "s16le", "-ar", "48000", "-ac", "2", "pipe:1"]) {
+            Ok(d) => d,
+            Err(e) => break Err(e),
+        };
+        while pcm.read_exact(&mut block).is_ok() {
+            let max = block.as_chunks::<2>().0.iter().map(|s| i16::from_le_bytes(*s).unsigned_abs()).max().unwrap_or(0);
+            peak.store((max as f32 / 32768.0).to_bits(), Ordering::Relaxed);
+            if let Some(input) = feed_in.as_mut()
+                && input.write_all(&block).is_err()
+            {
+                journal.push("son du jeu : pw-cat arrêté, l'entrée GL310-Audio reste muette");
+                feed_in = None;
+            }
+            if !linked && last_try.elapsed() >= Duration::from_millis(200) {
+                linked = link_audio_feed();
+                last_try = Instant::now();
+                if linked {
+                    journal.push("son du jeu relié à l'entrée audio GL310-Audio");
+                }
             }
         }
+        stop(&mut [&mut ffmpeg]);
+        if feed_in.is_none() {
+            break Err("pw-cat à relancer".into());
+        }
+        thread::sleep(DECODER_PAUSE);
     };
     drop(feed_in);
-    stop(&mut [&mut ffmpeg, &mut feed]);
+    stop(&mut [&mut feed]);
     result
 }

@@ -1,8 +1,9 @@
 //! `Hub` : reçoit le flux du boîtier, le réaligne en paquets TS et le distribue aux lecteurs
 //! (décodeurs de l'aperçu et de la caméra, enregistrement, clients HTTP). Un nouveau lecteur reçoit PAT + PMT puis
 //! le flux à partir de la prochaine image clé : il décode tout de suite, sans analyser ni rejouer d'images en retard.
-//! Les clients réseau sont coupés à chaque redémarrage de l'encodeur (horodatages remis à zéro, sur lesquels la
-//! Source média d'OBS se fige) : ils se reconnectent sur le nouveau flux.
+//! Les clients réseau et les décodeurs de l'aperçu et du son sont coupés à chaque redémarrage de l'encodeur
+//! (horodatages remis à zéro, sur lesquels la Source média d'OBS et ffmpeg se figent) : ils repartent sur le nouveau
+//! flux. Seul l'enregistrement le garde.
 
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -55,13 +56,13 @@ impl Hub {
         });
     }
 
-    /// Nouveau lecteur local (aperçu, caméra, enregistrement) : il recevra PAT + PMT puis le flux en direct dès la
+    /// Nouveau lecteur local (enregistrement) : il recevra PAT + PMT puis le flux en direct dès la
     /// prochaine image clé, et le garde à travers les redémarrages de l'encodeur.
     pub fn subscribe(&self, capacity: usize) -> Receiver<Chunk> {
         self.add_reader(capacity, false)
     }
 
-    /// Nouveau client réseau : comme `subscribe`, mais coupé au prochain redémarrage de l'encodeur.
+    /// Nouveau client réseau ou décodeur : comme `subscribe`, mais coupé au prochain redémarrage de l'encodeur.
     pub fn subscribe_session(&self, capacity: usize) -> Receiver<Chunk> {
         self.add_reader(capacity, true)
     }
