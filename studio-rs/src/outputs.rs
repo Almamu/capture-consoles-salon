@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use crate::hub::Hub;
 use crate::journal::Journal;
 use crate::picture::{i420_len, i420_to_rgba_half};
+use crate::i18n::{t, tf};
 
 pub const WIDTH: usize = 1920;
 pub const HEIGHT: usize = 1080;
@@ -54,12 +55,12 @@ impl Outputs {
         let (h, j, p) = (hub.clone(), journal.clone(), preview.clone());
         thread::Builder::new()
             .name("video".into())
-            .spawn(move || keep_running(&j, "image", || run_video(&h, &p, &j)))
+            .spawn(move || keep_running(&j, t("image"), || run_video(&h, &p, &j)))
             .expect("fil vidéo");
         let peak = audio_peak.clone();
         thread::Builder::new()
             .name("audio".into())
-            .spawn(move || keep_running(&journal, "son", || run_audio(&hub, &peak, &journal)))
+            .spawn(move || keep_running(&journal, t("son"), || run_audio(&hub, &peak, &journal)))
             .expect("fil audio");
         Outputs { preview, audio_peak, _audio_source: audio_source }
     }
@@ -88,11 +89,11 @@ impl VirtualAudioSource {
                 VirtualAudioSource { module: Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) }
             }
             Ok(o) => {
-                journal.push(format!("entrée audio GL310-Audio non créée : {}", String::from_utf8_lossy(&o.stderr).trim()));
+                journal.push(tf("entrée audio GL310-Audio non créée : {}", &[&String::from_utf8_lossy(&o.stderr).trim()]));
                 VirtualAudioSource { module: None }
             }
             Err(e) => {
-                journal.push(format!("entrée audio GL310-Audio non créée (pactl introuvable : {e})"));
+                journal.push(tf("entrée audio GL310-Audio non créée (pactl introuvable : {})", &[&e]));
                 VirtualAudioSource { module: None }
             }
         }
@@ -132,7 +133,7 @@ fn link_audio_feed() -> bool {
 fn keep_running(journal: &Journal, what: &str, mut run: impl FnMut() -> Result<(), String>) {
     loop {
         if let Err(e) = run() {
-            journal.push(format!("{what} : {e} — relance dans 2 s"));
+            journal.push(tf("{} : {} — relance dans 2 s", &[&what, &e]));
         }
         thread::sleep(Duration::from_secs(2));
     }
@@ -148,7 +149,7 @@ fn decoder(hub: &Hub, output: &[&str]) -> Result<(Child, impl Read), String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("ffmpeg introuvable ({e})"))?;
+        .map_err(|e| tf("ffmpeg introuvable ({})", &[&e]))?;
     let mut stdin = child.stdin.take().expect("entrée ffmpeg");
     let stdout = child.stdout.take().expect("sortie ffmpeg");
     // Coupé au redémarrage de l'encodeur : ffmpeg se fige sur des horodatages remis à zéro.
@@ -174,7 +175,7 @@ fn pipewire_node(parse: &[&str], properties: &str) -> Result<(Child, ChildStdin)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("gst-launch-1.0 introuvable ({e})"))?;
+        .map_err(|e| tf("gst-launch-1.0 introuvable ({})", &[&e]))?;
     let stdin = child.stdin.take().expect("entrée gst");
     Ok((child, stdin))
 }
@@ -205,7 +206,7 @@ fn run_video(hub: &Hub, preview: &Mutex<Preview>, journal: &Journal) -> Result<(
         while frames.read_exact(&mut frame).is_ok() {
             if let Some(input) = camera_in.as_mut()
                 && input.write_all(&frame).is_err() {
-                    journal.push("caméra PipeWire GL310 arrêtée : l'aperçu continue sans elle");
+                    journal.push(t("caméra PipeWire GL310 arrêtée : l'aperçu continue sans elle"));
                     camera_in = None;
                 }
             let rgba = Arc::new(i420_to_rgba_half(&frame, WIDTH, HEIGHT));
@@ -215,7 +216,7 @@ fn run_video(hub: &Hub, preview: &Mutex<Preview>, journal: &Journal) -> Result<(
         }
         stop(&mut [&mut ffmpeg]);
         if camera_in.is_none() {
-            break Err("caméra PipeWire GL310 à relancer".into());
+            break Err(t("caméra PipeWire GL310 à relancer").into());
         }
         thread::sleep(DECODER_PAUSE);
     };
@@ -233,7 +234,7 @@ fn run_audio(hub: &Hub, peak: &AtomicU32, journal: &Journal) -> Result<(), Strin
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("pw-cat introuvable ({e})"))?;
+        .map_err(|e| tf("pw-cat introuvable ({})", &[&e]))?;
     let mut feed_in = feed.stdin.take();
     let (mut linked, mut last_try) = (false, Instant::now() - Duration::from_secs(1));
     let mut block = vec![0u8; AUDIO_BLOCK];
@@ -249,20 +250,20 @@ fn run_audio(hub: &Hub, peak: &AtomicU32, journal: &Journal) -> Result<(), Strin
             if let Some(input) = feed_in.as_mut()
                 && input.write_all(&block).is_err()
             {
-                journal.push("son du jeu : pw-cat arrêté, l'entrée GL310-Audio reste muette");
+                journal.push(t("son du jeu : pw-cat arrêté, l'entrée GL310-Audio reste muette"));
                 feed_in = None;
             }
             if !linked && last_try.elapsed() >= Duration::from_millis(200) {
                 linked = link_audio_feed();
                 last_try = Instant::now();
                 if linked {
-                    journal.push("son du jeu relié à l'entrée audio GL310-Audio");
+                    journal.push(t("son du jeu relié à l'entrée audio GL310-Audio"));
                 }
             }
         }
         stop(&mut [&mut ffmpeg]);
         if feed_in.is_none() {
-            break Err("pw-cat à relancer".into());
+            break Err(t("pw-cat à relancer").into());
         }
         thread::sleep(DECODER_PAUSE);
     };

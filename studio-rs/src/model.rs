@@ -6,6 +6,8 @@
 //!   GOP_LOOP_FILTER     bits 0-15 intervalle entre images clés (en images)
 //!   AUDIO_CONTROL_PARAM bits 0-9 débit audio (kbit/s), bit 16 aou_pass_en (son sur la prise AUDIO OUT)
 
+use crate::i18n::tf;
+
 /// Valeurs de la trace Windows (registres 0x6EC, 0x6E0, 0x6D4 du bloc de configuration).
 pub const TRACE_RATE_CONTROL: u32 = 0x0078_7530;
 pub const TRACE_GOP_LOOP_FILTER: u32 = 0xF199_001E;
@@ -36,13 +38,13 @@ impl Settings {
     /// Refuse toute valeur hors des choix prévus.
     pub fn validate(self) -> Result<Settings, String> {
         if !VIDEO_KBPS_CHOICES.contains(&self.video_kbps) {
-            return Err(format!("débit vidéo {} kbit/s non proposé {:?}", self.video_kbps, VIDEO_KBPS_CHOICES));
+            return Err(tf("débit vidéo {} kbit/s non proposé {}", &[&self.video_kbps, &format!("{VIDEO_KBPS_CHOICES:?}")]));
         }
         if !KEYFRAME_CHOICES.contains(&self.keyframe_interval) {
-            return Err(format!("intervalle d'images clés {} non proposé {:?}", self.keyframe_interval, KEYFRAME_CHOICES));
+            return Err(tf("intervalle d'images clés {} non proposé {}", &[&self.keyframe_interval, &format!("{KEYFRAME_CHOICES:?}")]));
         }
         if !AUDIO_KBPS_CHOICES.contains(&self.audio_kbps) {
-            return Err(format!("débit audio {} kbit/s non proposé {:?}", self.audio_kbps, AUDIO_KBPS_CHOICES));
+            return Err(tf("débit audio {} kbit/s non proposé {}", &[&self.audio_kbps, &format!("{AUDIO_KBPS_CHOICES:?}")]));
         }
         Ok(self)
     }
@@ -59,16 +61,16 @@ impl Settings {
     pub fn from_text(text: &str) -> Result<Settings, String> {
         let mut s = Settings::default();
         for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
-            let (key, value) = line.split_once('=').ok_or_else(|| format!("ligne illisible : {line}"))?;
-            let bad = |_| format!("valeur illisible : {line}");
+            let (key, value) = line.split_once('=').ok_or_else(|| tf("ligne illisible : {}", &[&line]))?;
+            let bad = |_| tf("valeur illisible : {}", &[&line]);
             match key.trim() {
                 "video_kbps" => s.video_kbps = value.trim().parse().map_err(bad)?,
                 "keyframe_interval" => s.keyframe_interval = value.trim().parse().map_err(bad)?,
                 "audio_kbps" => s.audio_kbps = value.trim().parse().map_err(bad)?,
-                "audio_out" => s.audio_out = value.trim().parse().map_err(|_| format!("valeur illisible : {line}"))?,
+                "audio_out" => s.audio_out = value.trim().parse().map_err(|_| tf("valeur illisible : {}", &[&line]))?,
                 // Anciennes versions : luminosité et contraste du micro, sans effet sur l'image encodée.
                 "brightness" | "contrast" => {}
-                other => return Err(format!("clé inconnue : {other}")),
+                other => return Err(tf("clé inconnue : {}", &[&other])),
             }
         }
         s.validate()

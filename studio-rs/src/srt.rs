@@ -11,6 +11,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::hub::Hub;
+use crate::i18n::tf;
 
 /// Charge utile d'un paquet SRT : 7 paquets TS (SRT_LIVE_DEF_PLSIZE).
 pub const PAYLOAD: usize = 7 * 188;
@@ -78,18 +79,18 @@ pub fn serve(bind: SocketAddrV4, hub: Arc<Hub>, log: impl Fn(String) + Send + Sy
         // SAFETY: `peer` et `len` décrivent un tampon valide de la taille annoncée.
         let caller = unsafe { srt_accept(listener, (&mut peer as *mut libc::sockaddr_in).cast(), &mut len) };
         if caller == SRT_INVALID_SOCK {
-            log(format!("SRT : attente d'appelant impossible ({})", last_error()));
+            log(tf("SRT : attente d'appelant impossible ({})", &[&last_error()]));
             thread::sleep(Duration::from_secs(1));
             continue;
         }
         let name = format!("{}:{}", Ipv4Addr::from(u32::from_be(peer.sin_addr.s_addr)), u16::from_be(peer.sin_port));
         let (hub, log) = (hub.clone(), log.clone());
         thread::spawn(move || {
-            log(format!("lecteur SRT {name} : connecté"));
+            log(tf("lecteur SRT {} : connecté", &[&name]));
             let end = send_live(caller, &hub);
             // SAFETY: socket accepté plus haut, fermé une seule fois.
             unsafe { srt_close(caller) };
-            log(format!("lecteur SRT {name} : déconnecté{}", end.err().map(|e| format!(" ({e})")).unwrap_or_default()));
+            log(tf("lecteur SRT {} : déconnecté{}", &[&name, &end.err().map(|e| format!(" ({e})")).unwrap_or_default()]));
         });
     }).map_err(|e| e.to_string())?;
     Ok(())

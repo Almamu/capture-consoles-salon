@@ -12,6 +12,7 @@ mod device;
 mod engine;
 mod hub;
 mod http;
+mod i18n;
 mod journal;
 mod model;
 mod outputs;
@@ -33,6 +34,7 @@ use crate::hub::Hub;
 use crate::journal::Journal;
 use crate::model::Settings;
 use crate::outputs::Outputs;
+use crate::i18n::{t, tf};
 
 const PROJECT_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 const DEFAULT_LISTEN: &str = "0.0.0.0:4848";
@@ -80,7 +82,7 @@ fn lan_ip() -> Option<IpAddr> {
 fn load_settings(path: &PathBuf, journal: &Journal) -> Settings {
     match std::fs::read_to_string(path) {
         Ok(text) => Settings::from_text(&text).unwrap_or_else(|e| {
-            journal.push(format!("réglages de {} ignorés : {e}", path.display()));
+            journal.push(tf("réglages de {} ignorés : {}", &[&path.display(), &e]));
             Settings::default()
         }),
         Err(_) => Settings::default(),
@@ -93,7 +95,7 @@ fn main() -> eframe::Result {
         [] => DEFAULT_LISTEN.to_string(),
         [flag, addr] if flag == "--listen" => addr.clone(),
         _ => {
-            eprintln!("Usage : gl310-studio [--listen 0.0.0.0:4848]");
+            eprintln!("{}", t("Usage : gl310-studio [--listen 0.0.0.0:4848]"));
             std::process::exit(2);
         }
     };
@@ -110,16 +112,16 @@ fn main() -> eframe::Result {
     let stream_url = format!("http://{}/stream.ts", listen.replace("0.0.0.0", &host));
     let log = journal.clone();
     match http::serve(&listen, hub.clone(), move |line| log.push(line)) {
-        Ok(()) => journal.push(format!("flux réseau : {stream_url}")),
-        Err(e) => journal.push(format!("flux réseau indisponible sur {listen} : {e}")),
+        Ok(()) => journal.push(tf("flux réseau : {}", &[&stream_url])),
+        Err(e) => journal.push(tf("flux réseau indisponible sur {} : {}", &[&listen, &e])),
     }
     let srt_bind = listen.parse::<SocketAddrV4>().map(|a| SocketAddrV4::new(*a.ip(), SRT_PORT));
     let srt_host = srt_bind.as_ref().map(|a| a.ip().to_string().replace("0.0.0.0", &host)).unwrap_or_default();
     let srt_url = format!("srt://{srt_host}:{SRT_PORT}?mode=caller&latency={}", srt::LATENCY_MS * 1000);
     let log = journal.clone();
     match srt_bind.map_err(|e| e.to_string()).and_then(|bind| srt::serve(bind, hub.clone(), move |line| log.push(line))) {
-        Ok(()) => journal.push(format!("flux SRT : {srt_url}")),
-        Err(e) => journal.push(format!("flux SRT indisponible : {e}")),
+        Ok(()) => journal.push(tf("flux SRT : {}", &[&srt_url])),
+        Err(e) => journal.push(tf("flux SRT indisponible : {}", &[&e])),
     }
     let engine = Arc::new(Engine::spawn(
         hub.clone(),

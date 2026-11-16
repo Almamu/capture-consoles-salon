@@ -21,6 +21,7 @@ use rusb::{Context, DeviceHandle, UsbContext};
 
 use crate::model::{audio_control_param, gop_loop_filter, parse_timing, rate_control, Settings, Signal};
 use crate::tables::{self, Cmd};
+use crate::i18n::{t, tf};
 
 const VENDOR: u16 = 0x07CA;
 const PRODUCT: u16 = 0xC835;
@@ -71,9 +72,9 @@ impl From<rusb::Error> for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::Usb(rusb::Error::Access) => write!(f, "accès USB refusé (règle udev 70-avermedia-gl310 absente ?)"),
-            Error::Usb(rusb::Error::Busy) => write!(f, "boîtier déjà utilisé par un autre programme (ou le pilote noyau gl310)"),
-            Error::Usb(e) => write!(f, "USB : {e}"),
+            Error::Usb(rusb::Error::Access) => f.write_str(t("accès USB refusé (règle udev 70-avermedia-gl310 absente ?)")),
+            Error::Usb(rusb::Error::Busy) => f.write_str(t("boîtier déjà utilisé par un autre programme (ou le pilote noyau gl310)")),
+            Error::Usb(e) => f.write_str(&tf("USB : {}", &[e])),
             Error::Protocol(m) => write!(f, "{m}"),
         }
     }
@@ -107,7 +108,7 @@ impl Gl310 {
                 continue;
             }
             if desc.product_id() == PRODUCT_LOCKED {
-                return protocol("le boîtier est en mode d835 : débranche-le 10 s puis rebranche-le");
+                return protocol(t("le boîtier est en mode d835 : débranche-le 10 s puis rebranche-le"));
             }
             if desc.product_id() == PRODUCT {
                 let handle = device.open()?;
@@ -132,7 +133,7 @@ impl Gl310 {
 
     fn send(&self, cmd: &[u8], expect: bool) -> Result<Vec<u8>> {
         if cmd[0] == 0x0B && cmd.len() > 8 && MCU_PROFILE_REGS.contains(&cmd[8]) {
-            return protocol(format!("écriture du profil permanent du micro ({:#04x}) refusée", cmd[8]));
+            return protocol(tf("écriture du profil permanent du micro ({}) refusée", &[&format!("{:#04x}", cmd[8])]));
         }
         self.handle.write_bulk(EP_CMD_OUT, cmd, CMD_TIMEOUT)?;
         if !expect {
@@ -156,7 +157,7 @@ impl Gl310 {
         cmd.extend(reg.to_le_bytes());
         let answer = self.send(&cmd, true)?;
         if answer.len() < 4 * count as usize {
-            return protocol(format!("réponse courte à la lecture de {reg:#06x}"));
+            return protocol(tf("réponse courte à la lecture de {}", &[&format!("{reg:#06x}")]));
         }
         Ok((0..count as usize).map(|i| le32(&answer, i)).collect())
     }
@@ -197,7 +198,7 @@ impl Gl310 {
         while got < bytes {
             let n = self.handle.read_bulk(EP_DATA_IN, &mut buf[got..], DATA_TIMEOUT)?;
             if n == 0 {
-                return protocol("données vides sur EP 0x81");
+                return protocol(t("données vides sur EP 0x81"));
             }
             got += n;
         }
@@ -228,7 +229,7 @@ impl Gl310 {
             if verify {
                 self.mem_header(false, a, chunk.len() as u32 / 4)?;
                 if self.read_data(chunk.len())? != chunk {
-                    return protocol(format!("relecture du firmware différente au mot {a:#x}"));
+                    return protocol(tf("relecture du firmware différente au mot {}", &[&format!("{a:#x}")]));
                 }
             }
         }
@@ -240,7 +241,7 @@ impl Gl310 {
     fn mcu_read(&self, reg: u8, n: u8) -> Result<Vec<u8>> {
         let answer = self.send(&[0x0C, 0x01, n, 0x00, MCU_ADDR, 0, 0, 0, reg], true)?;
         if answer.len() < n as usize {
-            return protocol(format!("réponse courte du micro (registre {reg:#04x})"));
+            return protocol(tf("réponse courte du micro (registre {})", &[&format!("{reg:#04x}")]));
         }
         Ok(answer[..n as usize].to_vec())
     }
@@ -273,13 +274,13 @@ impl Gl310 {
     pub fn boot(&self, firmware_dir: &Path, progress: &mut dyn FnMut(&str)) -> Result<()> {
         let read = |name: &str| {
             std::fs::read(firmware_dir.join(name))
-                .map_err(|e| Error::Protocol(format!("firmware {name} illisible dans {} : {e}", firmware_dir.display())))
+                .map_err(|e| Error::Protocol(tf("firmware {} illisible dans {} : {}", &[&name, &firmware_dir.display(), &e])))
         };
         let (audio, video) = (read("qpaudfwusb.bin")?, read("qpvidfwusb.bin")?);
         if audio.len() % 4 != 0 || video.len() % 4 != 0 {
-            return protocol("taille de firmware non multiple de 4");
+            return protocol(t("taille de firmware non multiple de 4"));
         }
-        progress("initialisation officielle (206 écritures I2C)");
+        progress(t("initialisation officielle (206 écritures I2C)"));
         self.run_table(tables::OFFICIAL_INIT)?;
 
         self.arm_run(false)?;
@@ -300,7 +301,7 @@ impl Gl310 {
         self.reg(0x0000)?;
         self.reg_write(0x0000, 0x07FF_0000)?;
 
-        progress("firmware audio");
+        progress(t("firmware audio"));
         let mut bss = AUDIO_BASE + audio.len() as u32 / 4;
         for words in AUDIO_BSS_WORDS {
             self.mem_write(bss, &vec![0u8; words as usize * 4], false)?;
@@ -312,7 +313,7 @@ impl Gl310 {
         self.word_write(CFG_BASE + 1, 0)?;
         self.reg_write(REG_TO_ARM_STATUS, 0)?;
 
-        progress("firmware vidéo");
+        progress(t("firmware vidéo"));
         self.mem_write(VIDEO_BASE, &video, true)?;
         self.arm_run(true)?;
         self.reg_write(REG_TO_ARM_STATUS, 0)?;
@@ -326,7 +327,7 @@ impl Gl310 {
         self.reg(0x0610)?;
         self.reg(0x0618)?;
         if !self.firmware_loaded()? {
-            return protocol("firmware absent après le démarrage de l'ARM");
+            return protocol(t("firmware absent après le démarrage de l'ARM"));
         }
         Ok(())
     }

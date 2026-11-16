@@ -1,5 +1,10 @@
 # Journal des décisions
 
+## 2026-11-16 — GL310 Studio en français, anglais et espagnol, selon la locale
+**Contexte.** L'appli sert aussi à des utilisateurs qui ne lisent pas le français (fork Almamu, système en espagnol).
+**Décision.** `i18n.rs` : le texte français reste dans le code et sert de clé (`t("…")`, `tf("… {} …", &[&x])`), l'anglais et l'espagnol sont dans une seule table ; la langue vient de LC_ALL, LC_MESSAGES puis LANG (fr, es, sinon anglais). Un test vérifie que chaque `t`/`tf` du code a sa traduction, avec autant de `{}` dans chaque langue. Interface, journal et messages d'erreur sont traduits ; docs et commentaires restent en français.
+**Renoncement.** gettext ou fluent (dépendances et fichiers à part pour ~110 phrases) ; une macro par phrase avec les trois langues sur place (le code de l'appli devient illisible et diverge plus du dépôt d'origine).
+
 ## 2026-11-16 — Les décodeurs de l'aperçu et du son repartent à chaque redémarrage de l'encodeur
 **Contexte.** Appli lancée avant que la console (Xbox One) envoie l'image, puis encodeur arrêté et relancé : l'aperçu et la caméra PipeWire GL310 sont restés noirs, alors que le flux réseau et l'enregistrement montraient le jeu. Le ffmpeg de l'image, lecteur local gardé à travers les redémarrages, sortait la même image noire ~180 fois par seconde au lieu des 30 images du flux ; relancer l'appli suffisait. La cause exacte dans ffmpeg n'est pas reproduite hors ligne (un flux concaténé avec des horodatages qui reculent ou avancent d'une heure se décode bien).
 **Décision.** Les décodeurs (image et son) s'abonnent comme les clients réseau (`subscribe_session`) : `new_session()` les coupe, ffmpeg finit son entrée et un nouveau décodeur part sur le nouveau flux 200 ms plus tard. La caméra PipeWire (gst-launch) et pw-cat restent en place, donc OBS garde ses sources. L'enregistrement garde le flux, comme avant.

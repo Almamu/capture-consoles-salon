@@ -68,6 +68,7 @@ installe `gl310-wifi-powersave`, lancé à l'ouverture de session : il la **coup
 batterie** (chaque bascule reconnecte le Wi-Fi 2 à 3 s ; trace : `journalctl -t gl310-wifi`). Si l'adresse du portable change (Wi-Fi), la fenêtre affiche la
 nouvelle ; on peut la figer dans la box internet (bail DHCP fixe).
 
+Langue : français, anglais ou espagnol selon la locale (`LANG`, `LC_MESSAGES`, `LC_ALL` ; anglais par défaut).
 Réglages mémorisés dans `~/.config/gl310-studio/settings.txt`. Tests : `./gate.sh` (voir plus bas).
 Besoins : ffmpeg, GStreamer (`gst-launch-1.0`, greffon pipewire), PipeWire (`pactl`, `pw-cat`, `pw-link`) — déjà
 présents sur Linux Mint 22. Pour n'écouter que sur ce PC : `gl310-studio --listen 127.0.0.1:4848`.

@@ -17,6 +17,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::hub::Hub;
+use crate::i18n::tf;
 
 pub fn serve(listen: &str, hub: Arc<Hub>, log: impl Fn(String) + Send + Sync + 'static) -> std::io::Result<()> {
     let listener = TcpListener::bind(listen)?;
@@ -27,9 +28,9 @@ pub fn serve(listen: &str, hub: Arc<Hub>, log: impl Fn(String) + Send + Sync + '
             thread::spawn(move || {
                 let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
                 match handle(stream, &hub) {
-                    Ok(true) => log(format!("lecteur réseau {peer} : déconnecté")),
+                    Ok(true) => log(tf("lecteur réseau {} : déconnecté", &[&peer])),
                     Ok(false) => {}
-                    Err(e) => log(format!("lecteur réseau {peer} : {e}")),
+                    Err(e) => log(tf("lecteur réseau {} : {}", &[&peer, &e])),
                 }
             });
         }

@@ -12,6 +12,7 @@ use crate::device::{Error, Gl310};
 use crate::hub::Hub;
 use crate::journal::Journal;
 use crate::model::{BoxStatus, Settings, Signal};
+use crate::i18n::{t, tf};
 
 pub enum Command {
     Start,
@@ -75,19 +76,19 @@ impl Worker {
                 Ok(Some(dev)) => match self.session(&dev, &rx) {
                     Ok(()) => return,
                     Err(SessionError::Boot(e)) => {
-                        self.journal.push(format!("démarrage du boîtier impossible : {e}"));
-                        self.set(BoxStatus::Failed { error: format!("{e} — débranche le boîtier 10 s puis rebranche-le") });
+                        self.journal.push(tf("démarrage du boîtier impossible : {}", &[&e]));
+                        self.set(BoxStatus::Failed { error: tf("{} — débranche le boîtier 10 s puis rebranche-le", &[&e]) });
                         needs_replug = true;
                         Duration::from_secs(1)
                     }
                     Err(SessionError::Usb(e)) => {
-                        self.journal.push(format!("liaison USB perdue : {e}"));
+                        self.journal.push(tf("liaison USB perdue : {}", &[&e]));
                         Duration::from_secs(1)
                     }
                 },
                 Ok(None) => {
                     if !matches!(self.status.lock().unwrap().clone(), BoxStatus::Absent) {
-                        self.journal.push("boîtier débranché");
+                        self.journal.push(t("boîtier débranché"));
                     }
                     needs_replug = false;
                     self.set(BoxStatus::Absent);
@@ -122,17 +123,17 @@ impl Worker {
     /// Pilote le boîtier jusqu'à la commande Quit (`Ok`) ou une erreur.
     fn session(&mut self, dev: &Gl310, rx: &Receiver<Command>) -> Result<(), SessionError> {
         if dev.firmware_loaded()? {
-            self.journal.push("boîtier trouvé, firmware déjà en RAM : remise à zéro de l'encodeur");
+            self.journal.push(t("boîtier trouvé, firmware déjà en RAM : remise à zéro de l'encodeur"));
             dev.stop_encoder()?;
         } else {
-            self.journal.push("boîtier trouvé : chargement des firmwares");
+            self.journal.push(t("boîtier trouvé : chargement des firmwares"));
             let (status, journal) = (self.status.clone(), self.journal.clone());
             dev.boot(&self.firmware_dir, &mut |step| {
-                journal.push(format!("démarrage : {step}"));
+                journal.push(tf("démarrage : {}", &[&step]));
                 *status.lock().unwrap() = BoxStatus::Booting { step: step.to_string() };
             })
             .map_err(SessionError::Boot)?;
-            self.journal.push("firmwares chargés, boîtier prêt");
+            self.journal.push(t("firmwares chargés, boîtier prêt"));
         }
 
         let mut streaming = false;
@@ -149,7 +150,7 @@ impl Worker {
                     Ok(Command::Quit) | Err(TryRecvError::Disconnected) => {
                         if streaming {
                             dev.stop_encoder()?;
-                            self.journal.push("encodeur arrêté");
+                            self.journal.push(t("encodeur arrêté"));
                         }
                         return Ok(());
                     }
@@ -160,10 +161,10 @@ impl Worker {
                 if self.want_stream {
                     self.hub.new_session(); // les clients réseau se reconnecteront sur le nouveau flux
                     dev.start_encoder(&self.settings)?;
-                    self.journal.push(format!("encodeur démarré à {} Mbit/s", self.settings.video_kbps / 1000));
+                    self.journal.push(tf("encodeur démarré à {} Mbit/s", &[&(self.settings.video_kbps / 1000)]));
                 } else {
                     dev.stop_encoder()?;
-                    self.journal.push("encodeur arrêté");
+                    self.journal.push(t("encodeur arrêté"));
                 }
                 streaming = self.want_stream;
             }
@@ -178,7 +179,7 @@ impl Worker {
                         dev.stop_encoder()?;
                         self.hub.new_session(); // les clients réseau se reconnecteront sur le nouveau flux
                         dev.start_encoder(&self.settings)?;
-                        self.journal.push("encodeur relancé sur le nouveau signal");
+                        self.journal.push(t("encodeur relancé sur le nouveau signal"));
                     }
                     signal = now;
                 }
@@ -217,9 +218,9 @@ impl Worker {
         dev.stop_encoder()?;
         self.hub.new_session(); // les clients réseau se reconnecteront sur le nouveau flux
         dev.start_encoder(&new)?;
-        self.journal.push(format!(
+        self.journal.push(tf(
             "encodeur relancé : {} Mbit/s, images clés toutes les {} images, AAC {} kbit/s, AUDIO OUT {}",
-            new.video_kbps / 1000, new.keyframe_interval, new.audio_kbps, if new.audio_out { "oui" } else { "non" }
+            &[&(new.video_kbps / 1000), &new.keyframe_interval, &new.audio_kbps, &t(if new.audio_out { "oui" } else { "non" })],
         ));
         Ok(())
     }
@@ -227,8 +228,8 @@ impl Worker {
 
 fn describe_signal(signal: Option<Signal>) -> String {
     match signal {
-        Some(s) => format!("signal HDMI : {}×{} à {} Hz", s.width, s.height, s.refresh_hz),
-        None => "pas de signal HDMI (console éteinte ou en veille ?)".into(),
+        Some(s) => tf("signal HDMI : {}×{} à {} Hz", &[&s.width, &s.height, &s.refresh_hz]),
+        None => t("pas de signal HDMI (console éteinte ou en veille ?)").into(),
     }
 }
 

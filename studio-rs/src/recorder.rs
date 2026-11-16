@@ -12,6 +12,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::hub::Hub;
+use crate::i18n::{t, tf};
 
 pub struct Recording {
     pub path: PathBuf,
@@ -33,11 +34,11 @@ impl Recording {
             while !stopping.load(Ordering::Relaxed) {
                 match rx.recv_timeout(Duration::from_millis(200)) {
                     Ok(chunk) => {
-                        file.write_all(&chunk).map_err(|e| format!("écriture de {} : {e}", ts.display()))?;
+                        file.write_all(&chunk).map_err(|e| tf("écriture de {} : {}", &[&ts.display(), &e]))?;
                         counter.fetch_add(chunk.len() as u64, Ordering::Relaxed);
                     }
                     Err(RecvTimeoutError::Timeout) => {}
-                    Err(RecvTimeoutError::Disconnected) => return Err("flux perdu pendant l'enregistrement (disque trop lent ?)".into()),
+                    Err(RecvTimeoutError::Disconnected) => return Err(t("flux perdu pendant l'enregistrement (disque trop lent ?)").into()),
                 }
             }
             file.flush().map_err(|e| e.to_string())?;
@@ -67,9 +68,9 @@ fn remux(ts: &Path) -> Result<PathBuf, String> {
         .arg(&mp4)
         .stderr(std::process::Stdio::null())
         .status()
-        .map_err(|e| format!("ffmpeg introuvable : {e}"))?;
+        .map_err(|e| tf("ffmpeg introuvable : {}", &[&e]))?;
     if !status.success() {
-        return Err(format!("conversion en MP4 impossible, le flux brut reste dans {}", ts.display()));
+        return Err(tf("conversion en MP4 impossible, le flux brut reste dans {}", &[&ts.display()]));
     }
     std::fs::remove_file(ts).map_err(|e| e.to_string())?;
     Ok(mp4)
