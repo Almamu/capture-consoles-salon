@@ -1,5 +1,10 @@
 # Journal des décisions
 
+## 2026-11-16 — Le dépôt est aussi un flake Nix (paquet, firmwares, module NixOS, environnement de dev)
+**Contexte.** Le fork Almamu tourne sous NixOS : pas d'apt, pas de `/etc/udev/rules.d` à la main, et install.sh copie dans `~/.local` ce que Nix sait gérer.
+**Décision.** `flake.nix` + `nix/` : `packages.gl310-studio` (construit depuis `studio-rs/`, `Cargo.lock` comme verrou), `packages.gl310-firmware` (pilote Windows d'archive.org, même fichier et même empreinte que `tools/fetch-vendor.sh`, licence non libre), `nixosModules.default` (`programs.gl310-studio.enable` : appli + règle udev uaccess) et `devShells.default` pour `./gate.sh`. Le paquet corrige deux chemins au moment de la compilation (nom de libsrt de Debian, firmwares du store) sans toucher au code, pour que install.sh et Debian restent comme avant. Le flake n'autorise que « gl310-firmware » comme paquet non libre ; une configuration NixOS doit l'autoriser elle-même.
+**Renoncement.** Mettre les firmwares dans le dépôt (licence d'AVerMedia) ; changer `#[link]` dans srt.rs (casserait la compilation sous Debian sans paquet -dev) ; ajouter `nix flake check` à gate.sh (Nix absent sur le PC d'origine).
+
 ## 2026-11-16 — GL310 Studio en français, anglais et espagnol, selon la locale
 **Contexte.** L'appli sert aussi à des utilisateurs qui ne lisent pas le français (fork Almamu, système en espagnol).
 **Décision.** `i18n.rs` : le texte français reste dans le code et sert de clé (`t("…")`, `tf("… {} …", &[&x])`), l'anglais et l'espagnol sont dans une seule table ; la langue vient de LC_ALL, LC_MESSAGES puis LANG (fr, es, sinon anglais). Un test vérifie que chaque `t`/`tf` du code a sa traduction, avec autant de `{}` dans chaque langue. Interface, journal et messages d'erreur sont traduits ; docs et commentaires restent en français.

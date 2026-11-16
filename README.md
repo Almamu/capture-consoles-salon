@@ -76,6 +76,32 @@ présents sur Linux Mint 22. Pour n'écouter que sur ce PC : `gl310-studio --lis
 L'ancien prototype web (`python3 -m studio`, page http://127.0.0.1:4848) reste disponible ; ne pas lancer les deux à la fois
 (un seul programme peut parler au boîtier).
 
+## NixOS
+
+Le dépôt est un flake : l'appli, les firmwares (téléchargés depuis archive.org, comme `tools/fetch-vendor.sh`), un
+module NixOS (appli + règle udev) et l'environnement de développement.
+
+```bash
+nix run github:Almamu/capture-consoles-salon     # essai sans installer (sans la règle udev : root nécessaire)
+```
+
+Installation dans une configuration NixOS en flake :
+
+```nix
+{
+  inputs.gl310-studio.url = "github:Almamu/capture-consoles-salon";
+
+  # dans les modules de la machine :
+  imports = [ inputs.gl310-studio.nixosModules.default ];
+  programs.gl310-studio.enable = true;
+  # firmwares d'AVerMedia, non libres : à autoriser par leur nom
+  nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ "gl310-firmware" ];
+}
+```
+
+Après `nixos-rebuild switch`, débrancher et rebrancher le boîtier (règle udev). Développement : `nix develop`
+(ou `use flake` dans un `.envrc` pour direnv), puis `./gate.sh` ou `cargo run --manifest-path studio-rs/Cargo.toml`.
+
 ## Utilisation en ligne de commande
 
 Une seule fois, pour installer les outils et l'accès USB sans root :
